@@ -18,7 +18,7 @@ services:
       - key: GRADIO_ANALYTICS_ENABLED
         value: "false"
 
-  - type: private              # acceso solo dentro de tu red Render
+  - type: web              # acceso solo dentro de tu red Render
     name: metabase
     env: docker
     plan: free
