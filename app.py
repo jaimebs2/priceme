@@ -5,17 +5,19 @@ from decimal import Decimal
 from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Numeric, DateTime
 
 """
-app.py — versión 2
+app.py — versión 3  (manejo de "request == None" y PORT dinámico)
+---------------------------------------------------------------
+Soluciona el error:
+    AttributeError: 'NoneType' object has no attribute 'query_params'
+que aparece cuando Gradio llama a _show_header sin request.
 
-👉 Cambios clave respecto a la primera versión
-------------------------------------------------
-1. Ya **no** hay `PRODUCT_ID` fijo. El ID, título y URL del producto vienen en los *query-params* de la URL que abre Shopify.
-2. Se añaden dos columnas nuevas (`product_title`, `product_url`) a la tabla para guardarlas.
-3. La función `register_interest` recibe el objeto `gr.Request`, lee `request.query_params` y guarda esos datos.
-4. Un pequeño `app.load()` actualiza el encabezado (“## Alerta de precio para…”) cuando la página se carga.
+Cambios:
+1. Todas las funciones aceptan `request: gr.Request | None` y manejan el caso `None`.
+2. Puerto leído de la variable de entorno `PORT` (Render lo define).
+3. Mensaje de confirmación simplificado.
 """
 
-# ---------- Configuración base de datos ----------
+# ---------------- Base de datos ----------------------------
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///price_requests.db")
 engine = create_engine(DATABASE_URL)
 metadata = MetaData()
@@ -32,19 +34,24 @@ price_requests = Table(
     Column("requested_at", DateTime, nullable=False),
 )
 
-metadata.create_all(engine)  # crea / actualiza la tabla si falta
+metadata.create_all(engine)
 
-# ---------- Lógica ----------
+# ---------------- Lógica -----------------------------------
 
-def register_interest(email: str, price: float, request: gr.Request) -> str:  # <- request llega automático
-    """Guarda la alerta y devuelve un mensaje de confirmación."""
+def register_interest(email: str, price: float, request: gr.Request | None = None) -> str:
     dec_price = Decimal(price).quantize(Decimal("0.01"))
-    now = datetime.now(datetime.timezone.utc)
+    now = datetime.utcnow()
 
-    params = request.query_params
-    product_id = params.get("product_id", "UNKNOWN")
-    product_title = params.get("product_title", "")
-    product_url = params.get("product_url", "")
+    # Valores por defecto si no vienen query-params
+    product_id = "UNKNOWN"
+    product_title = ""
+    product_url = ""
+
+    if request is not None:
+        params = request.query_params
+        product_id = params.get("product_id", product_id)
+        product_title = params.get("product_title", product_title)
+        product_url = params.get("product_url", product_url)
 
     with engine.begin() as conn:
         conn.execute(
@@ -58,13 +65,10 @@ def register_interest(email: str, price: float, request: gr.Request) -> str:  # 
             )
         )
 
-    nice_name = product_title or product_id
-    return (
-        f"¡Gracias! Hemos registrado tu alerta para «{nice_name}» a {dec_price} €. "
-        "Te avisaremos cuando se alcance."
-    )
+    nombre = product_title or product_id
+    return f"¡Guardado! Te avisaremos cuando «{nombre}» cueste {dec_price} €."
 
-# ---------- Interfaz Gradio ----------
+# ---------------- Interfaz Gradio --------------------------
 with gr.Blocks(title="Alerta de precio") as app:
     header_md = gr.Markdown()
 
@@ -78,18 +82,19 @@ with gr.Blocks(title="Alerta de precio") as app:
     submit_btn = gr.Button("Registrar alerta", variant="primary")
     out_box = gr.Textbox(label="Estado", interactive=False)
 
-    # Dinamiza el encabezado según los query-params
-    def _show_header(request: gr.Request):
+    def _show_header(request: gr.Request | None = None):
+        """Devuelve el título dinámico o uno genérico si no hay request."""
+        if request is None:
+            return "## Alerta de precio"
         pid = request.query_params.get("product_id", "Producto")
         title = request.query_params.get("product_title")
-        name = title or f"ID {pid}"
-        return f"## Alerta de precio para **{name}**"
+        nombre = title or f"ID {pid}"
+        return f"## Alerta de precio para **{nombre}**"
 
     app.load(fn=_show_header, inputs=None, outputs=header_md)
-
     submit_btn.click(register_interest, inputs=[email_input, price_input], outputs=out_box)
 
+# ---------------- Arranque ---------------------------------
 if __name__ == "__main__":
-    import os
-    port = int(os.getenv("PORT", 7860))   # Render define PORT en runtime
+    port = int(os.getenv("PORT", 7860))  # Render define $PORT
     app.launch(server_name="0.0.0.0", server_port=port)
