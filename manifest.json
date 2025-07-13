@@ -1,0 +1,7 @@
+{
+  "name": "Price Alert",
+  "short_name": "PriceAlert",
+  "start_url": "/",
+  "display": "standalone",
+  "icons": []
+}

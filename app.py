@@ -1,32 +1,40 @@
-import gradio as gr
 import os
-from datetime import datetime
+from pathlib import Path
+from datetime import datetime, timezone
 from decimal import Decimal
-from sqlalchemy import create_engine, MetaData, Table, Column, Integer, String, Numeric, DateTime
+
+import gradio as gr
+from fastapi import FastAPI
+from fastapi.responses import FileResponse
+from sqlalchemy import (
+    create_engine,
+    MetaData,
+    Table,
+    Column,
+    Integer,
+    String,
+    Numeric,
+    DateTime,
+)
 
 """
-app.py — versión 3  (manejo de "request == None" y PORT dinámico)
----------------------------------------------------------------
-Soluciona el error:
-    AttributeError: 'NoneType' object has no attribute 'query_params'
-que aparece cuando Gradio llama a _show_header sin request.
-
-Cambios:
-1. Todas las funciones aceptan `request: gr.Request | None` y manejan el caso `None`.
-2. Puerto leído de la variable de entorno `PORT` (Render lo define).
-3. Mensaje de confirmación simplificado.
+app.py — versión 4
+------------------
+✔ Soluciona:
+  • Doble `create_engine` (uno sobraba).
+  • `datetime.datetime.now(datetime.UTC)` → ahora `datetime.now(timezone.utc)`.
+  • Carga de `/manifest.json` para Chrome/Edge (previene error Svelte-i18n).
+  • Normaliza `postgres://` → `postgresql://` y añade `pool_pre_ping=True`.
+  • Reemplaza `app.launch()` por montaje ASGI en FastAPI para exponer el
+    manifiesto y seguir siendo compatible con Render.
 """
 
-# ---------------- Base de datos ----------------------------
+# --------- Configuración de la base de datos ----------------
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///price_requests.db")
-
-# Render entrega postgres://...   →  cámbialo a postgresql://...
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
 
 engine = create_engine(DATABASE_URL, pool_pre_ping=True)
-
-engine = create_engine(DATABASE_URL)
 metadata = MetaData()
 
 price_requests = Table(
@@ -40,25 +48,19 @@ price_requests = Table(
     Column("desired_price", Numeric(10, 2), nullable=False),
     Column("requested_at", DateTime, nullable=False),
 )
-
 metadata.create_all(engine)
 
-# ---------------- Lógica -----------------------------------
+# ------------------- Lógica ---------------------------------
 
 def register_interest(email: str, price: float, request: gr.Request | None = None) -> str:
     dec_price = Decimal(price).quantize(Decimal("0.01"))
-    now = datetime.utcnow()
+    now = datetime.now(timezone.utc)
 
-    # Valores por defecto si no vienen query-params
-    product_id = "UNKNOWN"
-    product_title = ""
-    product_url = ""
-
-    if request is not None:
-        params = request.query_params
-        product_id = params.get("product_id", product_id)
-        product_title = params.get("product_title", product_title)
-        product_url = params.get("product_url", product_url)
+    # Defaults por si faltan query-params
+    params = request.query_params if request else {}
+    product_id = params.get("product_id", "UNKNOWN")
+    product_title = params.get("product_title", "")
+    product_url = params.get("product_url", "")
 
     with engine.begin() as conn:
         conn.execute(
@@ -75,22 +77,16 @@ def register_interest(email: str, price: float, request: gr.Request | None = Non
     nombre = product_title or product_id
     return f"¡Guardado! Te avisaremos cuando «{nombre}» cueste {dec_price} €."
 
-# ---------------- Interfaz Gradio --------------------------
-with gr.Blocks(title="Alerta de precio") as app:
+# ------------------ UI con Gradio ---------------------------
+with gr.Blocks(title="Alerta de precio") as demo:
     header_md = gr.Markdown()
 
-    email_input = gr.Textbox(
-        label="Correo electrónico",
-        placeholder="tucorreo@ejemplo.com",
-        elem_id="email",
-    )
-    price_input = gr.Number(label="Precio objetivo (€)", minimum=0, precision=2, elem_id="price")
-
+    email_input = gr.Textbox(label="Correo electrónico", placeholder="tucorreo@ejemplo.com")
+    price_input = gr.Number(label="Precio objetivo (€)", minimum=0, precision=2)
     submit_btn = gr.Button("Registrar alerta", variant="primary")
     out_box = gr.Textbox(label="Estado", interactive=False)
 
     def _show_header(request: gr.Request | None = None):
-        """Devuelve el título dinámico o uno genérico si no hay request."""
         if request is None:
             return "## Alerta de precio"
         pid = request.query_params.get("product_id", "Producto")
@@ -98,10 +94,31 @@ with gr.Blocks(title="Alerta de precio") as app:
         nombre = title or f"ID {pid}"
         return f"## Alerta de precio para **{nombre}**"
 
-    app.load(fn=_show_header, inputs=None, outputs=header_md)
+    demo.load(fn=_show_header, inputs=None, outputs=header_md)
     submit_btn.click(register_interest, inputs=[email_input, price_input], outputs=out_box)
 
-# ---------------- Arranque ---------------------------------
+# --------------- FastAPI wrapper + manifest -----------------
+api = FastAPI()
+manifest_path = Path(__file__).with_name("manifest.json")
+
+@api.get("/manifest.json")
+async def manifest():
+    if manifest_path.exists():
+        return FileResponse(manifest_path)
+    # fallback minimal manifest
+    return {
+        "name": "Price Alert",
+        "short_name": "PriceAlert",
+        "start_url": "/",
+        "display": "standalone",
+        "icons": [],
+    }
+
+app = gr.mount_gradio_app(api, demo, path="/")
+
+# ----------------- Arranque local ---------------------------
 if __name__ == "__main__":
-    port = int(os.getenv("PORT", 7860))  # Render define $PORT
-    app.launch(server_name="0.0.0.0", server_port=port)
+    port = int(os.getenv("PORT", 7860))
+    import uvicorn  # local dev convenience
+
+    uvicorn.run(app, host="0.0.0.0", port=port)
