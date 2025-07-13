@@ -1,0 +1,29 @@
+databases:
+  - name: price-db
+    plan: free               # 1 GB, 30 días de gracia
+    databaseName: price_alerts   # se crea sola
+    user: metabase           # Render autogenera la contraseña
+
+services:
+  - type: web
+    name: gradio-price-alert
+    runtime: python
+    plan: free
+    repo: .
+    buildCommand: pip install -r requirements.txt
+    startCommand: gunicorn -k uvicorn.workers.UvicornWorker app:app --bind 0.0.0.0:$PORT
+    envVars:
+      - key: DATABASE_URL
+        fromDatabase: price-db   # Render “hace el puente” automáticamente
+      - key: GRADIO_ANALYTICS_ENABLED
+        value: "false"
+
+  - type: private              # acceso solo dentro de tu red Render
+    name: metabase
+    env: docker
+    plan: free
+    dockerfilePath: Dockerfile.metabase
+    healthCheckPath: /
+    envVars:
+      - key: MB_DB_CONNECTION_URI
+        fromDatabase: price-db   # conecta Metabase al mismo Postgres
