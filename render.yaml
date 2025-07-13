@@ -1,22 +1,35 @@
+databases:
+  - name: price-db
+    plan: free
+    databaseName: price_alerts
+    user: metabase         # Render generará la contraseña
+
 services:
-  # --- Gradio (sin cambios) --------------------------
+  # ---------- Gradio ----------------------------------------
   - type: web
     name: gradio-price-alert
     runtime: python
     plan: free
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -k uvicorn.workers.UvicornWorker app:app --bind 0.0.0.0:$PORT
-    envVars:
-      - key: DATABASE_URL
-        fromDatabase: price-db
-
-  # --- Metabase (antes “private”) --------------------
-  - type: web          #  <-- CAMBIO: era “private”
-    name: metabase
-    env: docker
-    plan: free
-    dockerfilePath: Dockerfile.metabase
     autoDeploy: false
     envVars:
+      - key: DATABASE_URL          # ← URL completa p→ Postgres
+        fromDatabase:
+          name: price-db
+          property: connectionString
+      - key: GRADIO_ANALYTICS_ENABLED
+        value: "false"
+
+  # ---------- Metabase --------------------------------------
+  - type: web                 # “web” es válido y gratis; si no quieres URL, luego la ocultas
+    name: metabase
+    runtime: docker
+    plan: free
+    dockerfilePath: Dockerfile.metabase
+    autoDeploy: false          # evita re-build cada push
+    envVars:
       - key: MB_DB_CONNECTION_URI
-        fromDatabase: price-db
+        fromDatabase:
+          name: price-db
+          property: connectionString
