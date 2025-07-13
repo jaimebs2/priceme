@@ -1,4 +1,6 @@
 import os
+os.environ["GRADIO_DEFAULT_LOCALE"] = "en"   #  o  "es"
+
 from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
@@ -29,7 +31,8 @@ app.py — versión 4
     manifiesto y seguir siendo compatible con Render.
 """
 
-# --------- Configuración de la base de datos ----------------
+# --------- Configuración de la base de datos ---------------
+
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///price_requests.db")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
