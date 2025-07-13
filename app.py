@@ -1,11 +1,12 @@
 import os
-os.environ["GRADIO_DEFAULT_LOCALE"] = "en"  # Idioma por defecto para evitar fallo svelte-i18n
+os.environ["GRADIO_DEFAULT_LOCALE"] = "en"  # Fijar idioma por defecto
 
 from datetime import datetime, timezone
 from decimal import Decimal
 from pathlib import Path
 
 import gradio as gr
+from fastapi.responses import FileResponse
 from sqlalchemy import (
     Column,
     DateTime,
@@ -18,11 +19,11 @@ from sqlalchemy import (
 )
 
 """
-app.py — versión 5 (simplificada)
---------------------------------
-• Elimina FastAPI/mount para volver a `app.launch()` → evita redirecciones 307.
-• Mantiene arreglos: normalizar `postgres://`, `pool_pre_ping`, timezone.utc.
-• Sigue usando GRADIO_DEFAULT_LOCALE="en" para Chrome/Edge.
+app.py — versión 6
+------------------
+• Sirve `/manifest.json` sobre el FastAPI interno de Gradio para evitar 404
+  y el error Svelte-i18n en Chrome/Edge.
+• Mantiene la lógica y arranque con `app.launch()` (sin redirecciones).
 """
 
 # ------------- Configuración BD ----------------------------
@@ -73,7 +74,7 @@ def register_interest(email: str, price: float, request: gr.Request | None = Non
     return f"¡Guardado! Te avisaremos cuando «{nombre}» cueste {dec_price} €."
 
 # ------------- Interfaz Gradio ------------------------------
-with gr.Blocks(title="Alerta de precio") as app:
+with gr.Blocks(title="Alerta de precio") as demo:
     header_md = gr.Markdown()
 
     email_input = gr.Textbox(label="Correo electrónico", placeholder="tucorreo@ejemplo.com")
@@ -89,10 +90,26 @@ with gr.Blocks(title="Alerta de precio") as app:
         nombre = title or f"ID {pid}"
         return f"## Alerta de precio para **{nombre}**"
 
-    app.load(fn=_show_header, inputs=None, outputs=header_md)
+    demo.load(fn=_show_header, inputs=None, outputs=header_md)
     submit_btn.click(register_interest, inputs=[email_input, price_input], outputs=out_box)
+
+# ------------- Manifest.json route --------------------------
+manifest_path = Path(__file__).with_name("manifest.json")
+
+@demo.app.get("/manifest.json")  # type: ignore[attr-defined]
+async def manifest():
+    if manifest_path.exists():
+        return FileResponse(manifest_path)
+    # fallback mínimo
+    return {
+        "name": "Price Alert",
+        "short_name": "PriceAlert",
+        "start_url": "/",
+        "display": "standalone",
+        "icons": [],
+    }
 
 # ------------- Arranque ------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 7860))
-    app.launch(server_name="0.0.0.0", server_port=port)
+    demo.launch(server_name="0.0.0.0", server_port=port)
