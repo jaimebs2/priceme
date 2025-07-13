@@ -1,38 +1,31 @@
 import os
-os.environ["GRADIO_DEFAULT_LOCALE"] = "en"   #  o  "es"
+os.environ["GRADIO_DEFAULT_LOCALE"] = "en"  # Idioma por defecto para evitar fallo svelte-i18n
 
-from pathlib import Path
 from datetime import datetime, timezone
 from decimal import Decimal
+from pathlib import Path
 
 import gradio as gr
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
 from sqlalchemy import (
-    create_engine,
-    MetaData,
-    Table,
     Column,
-    Integer,
-    String,
-    Numeric,
     DateTime,
+    Integer,
+    MetaData,
+    Numeric,
+    String,
+    Table,
+    create_engine,
 )
 
 """
-app.py — versión 4
-------------------
-✔ Soluciona:
-  • Doble `create_engine` (uno sobraba).
-  • `datetime.datetime.now(datetime.UTC)` → ahora `datetime.now(timezone.utc)`.
-  • Carga de `/manifest.json` para Chrome/Edge (previene error Svelte-i18n).
-  • Normaliza `postgres://` → `postgresql://` y añade `pool_pre_ping=True`.
-  • Reemplaza `app.launch()` por montaje ASGI en FastAPI para exponer el
-    manifiesto y seguir siendo compatible con Render.
+app.py — versión 5 (simplificada)
+--------------------------------
+• Elimina FastAPI/mount para volver a `app.launch()` → evita redirecciones 307.
+• Mantiene arreglos: normalizar `postgres://`, `pool_pre_ping`, timezone.utc.
+• Sigue usando GRADIO_DEFAULT_LOCALE="en" para Chrome/Edge.
 """
 
-# --------- Configuración de la base de datos ---------------
-
+# ------------- Configuración BD ----------------------------
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///price_requests.db")
 if DATABASE_URL.startswith("postgres://"):
     DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
@@ -53,13 +46,12 @@ price_requests = Table(
 )
 metadata.create_all(engine)
 
-# ------------------- Lógica ---------------------------------
+# ------------- Lógica --------------------------------------
 
 def register_interest(email: str, price: float, request: gr.Request | None = None) -> str:
     dec_price = Decimal(price).quantize(Decimal("0.01"))
     now = datetime.now(timezone.utc)
 
-    # Defaults por si faltan query-params
     params = request.query_params if request else {}
     product_id = params.get("product_id", "UNKNOWN")
     product_title = params.get("product_title", "")
@@ -80,8 +72,8 @@ def register_interest(email: str, price: float, request: gr.Request | None = Non
     nombre = product_title or product_id
     return f"¡Guardado! Te avisaremos cuando «{nombre}» cueste {dec_price} €."
 
-# ------------------ UI con Gradio ---------------------------
-with gr.Blocks(title="Alerta de precio") as demo:
+# ------------- Interfaz Gradio ------------------------------
+with gr.Blocks(title="Alerta de precio") as app:
     header_md = gr.Markdown()
 
     email_input = gr.Textbox(label="Correo electrónico", placeholder="tucorreo@ejemplo.com")
@@ -97,31 +89,10 @@ with gr.Blocks(title="Alerta de precio") as demo:
         nombre = title or f"ID {pid}"
         return f"## Alerta de precio para **{nombre}**"
 
-    demo.load(fn=_show_header, inputs=None, outputs=header_md)
+    app.load(fn=_show_header, inputs=None, outputs=header_md)
     submit_btn.click(register_interest, inputs=[email_input, price_input], outputs=out_box)
 
-# --------------- FastAPI wrapper + manifest -----------------
-api = FastAPI()
-manifest_path = Path(__file__).with_name("manifest.json")
-
-@api.get("/manifest.json")
-async def manifest():
-    if manifest_path.exists():
-        return FileResponse(manifest_path)
-    # fallback minimal manifest
-    return {
-        "name": "Price Alert",
-        "short_name": "PriceAlert",
-        "start_url": "/",
-        "display": "standalone",
-        "icons": [],
-    }
-
-app = gr.mount_gradio_app(api, demo, path="/")
-
-# ----------------- Arranque local ---------------------------
+# ------------- Arranque ------------------------------------
 if __name__ == "__main__":
     port = int(os.getenv("PORT", 7860))
-    import uvicorn  # local dev convenience
-
-    uvicorn.run(app, host="0.0.0.0", port=port)
+    app.launch(server_name="0.0.0.0", server_port=port)
