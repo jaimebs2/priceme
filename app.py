@@ -19,6 +19,13 @@ Cambios:
 
 # ---------------- Base de datos ----------------------------
 DATABASE_URL = os.getenv("DATABASE_URL", "sqlite:///price_requests.db")
+
+# Render entrega postgres://...   →  cámbialo a postgresql://...
+if DATABASE_URL.startswith("postgres://"):
+    DATABASE_URL = DATABASE_URL.replace("postgres://", "postgresql://", 1)
+
+engine = create_engine(DATABASE_URL, pool_pre_ping=True)
+
 engine = create_engine(DATABASE_URL)
 metadata = MetaData()
 
